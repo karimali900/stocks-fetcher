@@ -1,0 +1,53 @@
+FROM fedora:43
+
+# Update and install required packages in one RUN layer
+RUN dnf update -y && \
+    dnf install -y \
+        chromium \
+        chromedriver \
+        python3 \
+        python3-pip \
+        python3-devel \
+        gcc \
+        nss \
+        libX11 \
+        libXcomposite \
+        libXdamage \
+        libXext \
+        libXfixes \
+        libXi \
+        libXtst \
+        cups-libs \
+        libgbm \
+        alsa-lib \
+        atk \
+        cairo \
+        gtk3 \
+        pango \
+        xorg-x11-fonts-Type1 \
+        xorg-x11-fonts-misc \
+        fontconfig && \
+    dnf clean all && \
+    rm -rf /var/cache/dnf/*
+
+# Install Python dependencies
+RUN pip3 install --no-cache-dir \
+    textblob \
+    prophet \
+    plotly \
+    sqlalchemy \
+    yfinance \
+    pandas \
+    numpy \
+    requests \
+    selenium \
+    kafka-python \
+    redis \
+    psycopg2-binary
+
+# Set working directory and copy application code
+WORKDIR /app
+COPY . .
+
+# Run your script (change filename if it's different)
+CMD ["python3", "us_eg_su-stocks_fixed1.py"]

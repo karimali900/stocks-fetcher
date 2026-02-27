@@ -1,0 +1,203 @@
+# docker-compose.yml - Cleaned & production-ready version (Feb 2026)
+
+x-common: &common
+  restart: unless-stopped
+  networks:
+    - stocks-net
+
+x-env-common: &env-common
+  TZ: Africa/Cairo
+
+x-healthcheck-defaults: &healthcheck-defaults
+  interval: 10s
+  timeout: 6s
+  retries: 10
+  start_period: 30s
+  start_interval: 3s
+
+services:
+
+  zookeeper:
+    <<: *common
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: zookeeper
+    ports:
+      - "2182:2181"  # optional
+    environment:
+      <<: *env-common
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+      - zookeeper_log:/var/lib/zookeeper/log
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD-SHELL", "nc -z localhost 2181 || exit 1"]
+
+  kafka:
+    <<: *common
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports:
+      - "9092:9092"
+      - "19092:19092"
+    environment:
+      <<: *env-common
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:9092,EXTERNAL://0.0.0.0:19092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://localhost:19092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_HEAP_OPTS: "-Xmx1024m -Xms1024m"
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    deploy:
+      resources:
+        limits:
+          memory: 1400M
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      start_period: 180s
+      retries: 40
+
+  kafka-init:
+    image: confluentinc/cp-kafka:7.5.0
+    environment: *env-common
+    depends_on:
+      kafka:
+        condition: service_healthy
+    command: >
+      sh -c "sleep 10 && kafka-topics --create --topic stock-reports --bootstrap-server kafka:9092 --replication-factor 1 --partitions 3 --if-not-exists || true"
+    networks:
+      - stocks-net
+
+  kafka-ui:
+    <<: *common
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    ports:
+      - "8082:8080"
+    environment:
+      <<: *env-common
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      DYNAMIC_CONFIG_ENABLED: "true"
+      LOGGING_LEVEL_COM_PROVECTUS: DEBUG
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+  redis:
+    <<: *common
+    image: redis:7.2-alpine
+    container_name: redis
+    environment: *env-common
+    ports:
+      - "6380:6379"
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "redis-cli", "ping"]
+
+  postgres:
+    <<: *common
+    image: postgres:16-alpine
+    container_name: postgres
+    ports:
+      - "5433:5432"
+    environment:
+      <<: *env-common
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: karim
+      POSTGRES_DB: stocks_2026
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "pg_isready", "-U", "postgres", "-d", "stocks_2026"]
+
+  grafana:
+    <<: *common
+    image: grafana/grafana:10.4.1
+    container_name: grafana
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "3001:3000"
+    environment:
+      <<: *env-common
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana-provisioning:/etc/grafana/provisioning:ro
+
+  # ── Producer service ───────────────────────────────────────────────
+  stocks-producer:
+    <<: *common
+    build:
+      context: .
+      dockerfile: Dockerfile.fedora.yml
+    container_name: stocks-producer
+    user: "${UID:-1000}:${GID:-1000}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy  # optional if you still use Redis
+    environment:
+      <<: *env-common
+      KAFKA_BOOTSTRAP: kafka:9092
+      EMAIL_PASSWORD: ${EMAIL_PASSWORD}  # ← use .env file!
+      DATABASE_URL: postgresql+psycopg2://postgres:karim@postgres:5432/stocks_2026
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+    volumes:
+      - .:/app
+      - ./outputs:/app/outputs
+    command: python /app/us_eg_su_fetch_analyze_produce.py
+    restart: unless-stopped
+
+  # ── Consumer service ───────────────────────────────────────────────
+  stocks-consumer:
+    <<: *common
+    build:
+      context: .
+      dockerfile: Dockerfile.fedora.yml
+    container_name: stocks-consumer
+    user: "${UID:-1000}:${GID:-1000}"
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      <<: *env-common
+      KAFKA_BOOTSTRAP: kafka:9092
+    volumes:
+      - .:/app
+    command: python /app/consumer_report_processor.py
+    restart: unless-stopped
+
+  # (keep Airflow services if you still use them – otherwise remove)
+
+volumes:
+  kafka_data:
+  zookeeper_data:
+  zookeeper_log:
+  postgres_data:
+  grafana_data:
+
+networks:
+  stocks-net:
+    driver: bridge
