@@ -3,7 +3,7 @@
 pandas>=2.0.0
 numpy>=1.24.0
 yfinance>=0.2.0
-scipy
+scipy>=1.10
 # Plotting & visualization
 plotly>=5.15.0
 kaleido>=0.2.1          # required for plotly static image export (fig.write_image)
