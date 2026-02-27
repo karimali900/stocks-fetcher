@@ -1,0 +1,39 @@
+
+name: Stock Data Fetcher
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'   # Every 6 hours (e.g., 00:00, 06:00, 12:00, 18:00 UTC)
+  workflow_dispatch:        # Allows manual run from GitHub UI (great for testing)
+
+jobs:
+  fetch-stocks:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'  # Or 3.11/3.13 — matches your needs; scipy works here
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Run stock fetch script
+      run: python us_eg_su_fetch_analyze_produce.py
+
+    # Optional: If your script generates files (e.g., data.csv) and you want to save them back to repo
+    # - name: Commit results (if changed)
+    #   run: |
+    #     git config --global user.name 'GitHub Actions'
+    #     git config --global user.email 'actions@github.com'
+    #     git add .
+    #     git commit -m "Update stock data [auto]" || echo "No changes"
+    #     git push
+    #   env:
+    #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
