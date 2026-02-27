@@ -13,7 +13,8 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
-
+    - name: Debug installed packages
+      run: pip list | grep -E "numpy|pandas|yfinance|scipy|statsmodels"
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
